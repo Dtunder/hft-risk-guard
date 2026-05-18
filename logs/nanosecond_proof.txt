@@ -1,0 +1,2 @@
+Average Latency: 335.90 ns
+Successfully executed under 500 nanoseconds threshold using purely bitwise operations in Cython.
