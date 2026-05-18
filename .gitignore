@@ -1,0 +1,12 @@
+# Build artifacts
+*.so
+*.o
+*.c
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.pyc
+
+# Logs
+logs/
