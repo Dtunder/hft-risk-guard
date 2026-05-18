@@ -7,6 +7,7 @@ class HFTRiskGuard:
     """
     def __init__(self, max_position=10.0, max_drawdown=0.02, max_trades_per_sec=20):
         self.max_position = max_position
+        self.base_max_position = max_position
         self.max_drawdown = max_drawdown
         self.max_trades_per_sec = max_trades_per_sec
         
@@ -17,6 +18,28 @@ class HFTRiskGuard:
         # Velocity tracking
         self.trade_timestamps = []
         print("[RISK] Safety Guard Active. Drawdown limit: 2% | Max Position: 10 BTC")
+
+    def update_dynamic_limits(self, win_prob: float, win_loss_ratio: float, current_volatility: float, target_volatility: float = 0.02):
+        """
+        Phase C: Dynamic Position Sizing rules using Kelly Criterion and Volatility Target.
+        """
+        if win_loss_ratio > 0:
+            kelly_f = win_prob - ((1.0 - win_prob) / win_loss_ratio)
+        else:
+            kelly_f = 0.0
+
+        # Bound Kelly fraction between 0.0 and 1.0
+        kelly_f = max(0.0, min(1.0, kelly_f))
+
+        if current_volatility > 0:
+            vol_scalar = target_volatility / current_volatility
+        else:
+            vol_scalar = 1.0
+
+        # Cap volatility scalar to 1.0 to only shrink limits during spikes
+        vol_scalar = min(1.0, vol_scalar)
+
+        self.max_position = self.base_max_position * kelly_f * vol_scalar
 
     def update_portfolio(self, current_equity, current_position):
         self.current_equity = current_equity
