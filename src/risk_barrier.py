@@ -5,10 +5,12 @@ class HFTRiskGuard:
     Sub-10 microsecond safety filter for HFT execution.
     Instantly blocks orders that violate portfolio limits, drawdown rules, or velocity limits.
     """
-    def __init__(self, max_position=10.0, max_drawdown=0.02, max_trades_per_sec=20):
-        self.max_position = max_position
+    def __init__(self, base_max_position=10.0, max_drawdown=0.02, max_trades_per_sec=20, target_volatility=20.0):
+        self.base_max_position = base_max_position
+        self.max_position = base_max_position
         self.max_drawdown = max_drawdown
         self.max_trades_per_sec = max_trades_per_sec
+        self.target_volatility = target_volatility
         
         self.peak_equity = 100000.0  # $100k starting equity
         self.current_equity = 100000.0
@@ -16,7 +18,30 @@ class HFTRiskGuard:
         
         # Velocity tracking
         self.trade_timestamps = []
-        print("[RISK] Safety Guard Active. Drawdown limit: 2% | Max Position: 10 BTC")
+        print(f"[RISK] Safety Guard Active. Drawdown limit: {self.max_drawdown*100:.2f}% | Base Max Position: {self.base_max_position}")
+
+    def update_market_conditions(self, win_prob, win_loss_ratio, current_volatility):
+        """
+        Phase C: Dynamic Position Sizing
+        Updates max_position dynamically based on Kelly Criterion and Volatility Target.
+        """
+        # 1. Kelly Criterion Calculation: f* = p - (1-p)/b
+        if win_loss_ratio <= 0:
+            kelly_fraction = 0.0
+        else:
+            kelly_fraction = win_prob - ((1.0 - win_prob) / win_loss_ratio)
+
+        # Bound Kelly fraction between 0.0 and 1.0 (Full Kelly cap)
+        # We assume baseline Kelly is 1.0 (i.e. if we are not using Kelly initially,
+        #   we might default to 1.0, but here we calculate it strictly)
+        kelly_fraction = max(0.0, min(1.0, kelly_fraction))
+
+        # 2. Volatility Target Logic
+        # Scale down if current volatility > target volatility
+        vol_scalar = self.target_volatility / max(self.target_volatility, current_volatility)
+
+        # 3. Apply Dynamic Limits
+        self.max_position = self.base_max_position * kelly_fraction * vol_scalar
 
     def update_portfolio(self, current_equity, current_position):
         self.current_equity = current_equity
