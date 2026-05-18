@@ -6,6 +6,7 @@ class HFTRiskGuard:
     Instantly blocks orders that violate portfolio limits, drawdown rules, or velocity limits.
     """
     def __init__(self, max_position=10.0, max_drawdown=0.02, max_trades_per_sec=20):
+        self.base_max_position = max_position
         self.max_position = max_position
         self.max_drawdown = max_drawdown
         self.max_trades_per_sec = max_trades_per_sec
@@ -23,6 +24,32 @@ class HFTRiskGuard:
         if current_equity > self.peak_equity:
             self.peak_equity = current_equity
         self.current_position = current_position
+
+    def update_dynamic_limits(self, win_prob, win_loss_ratio, current_volatility, target_volatility=0.02):
+        """
+        Dynamically adjusts the maximum position limit using the Kelly Criterion
+        and Volatility Targeting logic.
+        """
+        # 1. Kelly Criterion
+        if win_loss_ratio > 0:
+            kelly_fraction = win_prob - ((1.0 - win_prob) / win_loss_ratio)
+        else:
+            kelly_fraction = 0.0
+
+        # Clamp Kelly fraction between 0 (no position) and 1 (full base position)
+        kelly_fraction = max(0.0, min(1.0, kelly_fraction))
+
+        # 2. Volatility Targeting
+        if current_volatility > 0:
+            vol_scalar = target_volatility / current_volatility
+        else:
+            vol_scalar = 1.0
+
+        # Limit the scalar so we don't blow up positions during zero volatility
+        vol_scalar = min(1.0, vol_scalar)
+
+        # 3. Dynamic adjustment
+        self.max_position = self.base_max_position * kelly_fraction * vol_scalar
 
     def check_safety(self, order_side, order_qty):
         """
@@ -66,3 +93,23 @@ if __name__ == "__main__":
     guard.update_portfolio(current_equity=97000.0, current_position=1.5)  # Drop to $97k (3% drawdown)
     safe, msg, latency = guard.check_safety("BUY", 0.5)
     print(f"[RISK] Check 3: {msg} | Latency: {latency:.2f} microseconds")
+
+    # Reset drawdown for next scenarios
+    guard.peak_equity = 100000.0
+    guard.update_portfolio(current_equity=100000.0, current_position=0.0)
+
+    # Scenario 4: Dynamic sizing under Normal Volatility
+    # win_prob=0.6, win_loss_ratio=1.5 -> Kelly = 0.6 - (0.4/1.5) = 0.333
+    # Max pos should be 10.0 * 0.333 * 1.0 = ~3.33
+    guard.update_dynamic_limits(win_prob=0.6, win_loss_ratio=1.5, current_volatility=0.02, target_volatility=0.02)
+    safe, msg, latency = guard.check_safety("BUY", 4.0)
+    print(f"[RISK] Check 4 (Normal Vol - 4.0 limit breach): {msg} | Latency: {latency:.2f} microseconds")
+
+    safe, msg, latency = guard.check_safety("BUY", 3.0)
+    print(f"[RISK] Check 4b (Normal Vol - 3.0 safe): {msg} | Latency: {latency:.2f} microseconds")
+
+    # Scenario 5: Volatility Spike! (VIX spikes, current vol = 0.10, which is 5x target)
+    guard.update_dynamic_limits(win_prob=0.6, win_loss_ratio=1.5, current_volatility=0.10, target_volatility=0.02)
+    # Max pos is drastically reduced (x 0.2)
+    safe, msg, latency = guard.check_safety("BUY", 3.0)
+    print(f"[RISK] Check 5 (Vol Spike - 3.0 rejected): {msg} | Latency: {latency:.2f} microseconds")
