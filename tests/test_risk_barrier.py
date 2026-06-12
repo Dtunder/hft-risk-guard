@@ -35,6 +35,41 @@ def test_ddl_ladder_limits():
     assert lev == 3
     assert max_qty == 5.0
 
+def test_trailing_stop_short():
+    guard = HFTRiskGuard()
+    # Assume price is 100
+    guard.update_tick(100.0)
+
+    # Enter short position
+    guard.update_portfolio(current_equity=100000.0, current_position=-1.0)
+
+    # Initially stop should be at 100 * (1 + 0.0035) = 100.35
+    assert abs(guard.stop_price - 100.35) < 1e-6
+
+    # Price moves down to 50
+    guard.update_tick(50.0)
+    assert abs(guard.stop_price - 50.175) < 1e-6
+
+    # Price moves up to 50.1 - trailing stop is not triggered yet, but new stop shouldn't move up
+    guard.update_tick(50.1)
+    assert abs(guard.stop_price - 50.175) < 1e-6
+
+    # Safe to sell more
+    safe, reason, _ = guard.check_safety("SELL", 0.5)
+    assert safe == True
+
+    # Price rises above stop (50.2)
+    guard.update_tick(50.2)
+
+    # Now it should be triggered, preventing any new SELL orders
+    safe, reason, _ = guard.check_safety("SELL", 0.5)
+    assert safe == False
+    assert "Trailing Stop Loss triggered" in reason
+
+    # Should still allow BUY (to close position)
+    safe, reason, _ = guard.check_safety("BUY", 1.0)
+    assert safe == True
+
 def test_trailing_stop():
     guard = HFTRiskGuard()
     # Assume price is 100
@@ -69,6 +104,18 @@ def test_trailing_stop():
     # Should still allow SELL (to close position)
     safe, reason, _ = guard.check_safety("SELL", 1.0)
     assert safe == True
+
+def test_max_daily_drawdown_hard_kill_switch():
+    guard = HFTRiskGuard(max_drawdown=0.03)
+    guard.update_portfolio(current_equity=100000.0, current_position=0)
+    guard.daily_start_equity = 100000.0
+
+    # 3.01% drawdown - unsafe, circuit breaker triggers
+    guard.update_portfolio(current_equity=96990.0, current_position=0)
+    safe, reason, _ = guard.check_safety("BUY", 0.1)
+    assert safe == False
+    assert "Daily loss limit 3.0% breached" in reason
+    assert guard.circuit_breaker_active == True
 
 def test_daily_drawdown_limit():
     guard = HFTRiskGuard(max_drawdown=0.03)
