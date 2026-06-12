@@ -24,7 +24,6 @@ class HFTRiskGuard:
         # Velocity tracking
         self.trade_timestamps = []
 
-        # Trailing stop loss
         self.stop_price = None
         self.trailing_stop_pct = 0.0035 # 0.35%
         self.last_price = None
@@ -59,18 +58,25 @@ class HFTRiskGuard:
         return self
 
     def update_tick(self, price: float):
+        """Updates trailing stop loss every tick."""
         self.last_price = price
         if self.current_position > 0:
-            stop = price * (1.0 - self.trailing_stop_pct)
-            if self.stop_price is None or stop > self.stop_price:
-                self.stop_price = stop
+            # Trailing stop for long position
+            new_stop = price * (1.0 - self.trailing_stop_pct)
+            if self.stop_price is None or new_stop > self.stop_price:
+                self.stop_price = new_stop
         elif self.current_position < 0:
-            stop = price * (1.0 + self.trailing_stop_pct)
-            if self.stop_price is None or stop < self.stop_price:
-                self.stop_price = stop
+            # Trailing stop for short position
+            new_stop = price * (1.0 + self.trailing_stop_pct)
+            if self.stop_price is None or new_stop < self.stop_price:
+                self.stop_price = new_stop
         return self
 
-    def get_ddl_limits(self, capital):
+    def get_ddl_limits(self, capital: float) -> tuple[int, float]:
+        """
+        50-cents-to-50k Dynamic De-leveraging (DDL) Ladder:
+        < €10 -> 100x max 0.01 BTC, < €100 -> 50x max 0.05 BTC, < €1k -> 25x max 0.20 BTC, < €10k -> 10x max 1.0 BTC, > €20k -> 3x max 5.0 BTC.
+        """
         if capital < 10:
             return 100, 0.01
         elif capital < 100:
@@ -84,7 +90,7 @@ class HFTRiskGuard:
         else:
             return 3, 5.0
 
-    def check_safety(self, signal, qty):
+    def check_safety(self, signal: str, qty: float) -> tuple[bool, str, float]:
         """
         Fast risk evaluation path. Must execute in microseconds.
         """
@@ -97,8 +103,8 @@ class HFTRiskGuard:
         
         # 1. Daily Drawdown Check (3% max daily drawdown hard kill-switch)
         if self.daily_start_equity > 0:
-            daily_loss = (self.daily_start_equity - self.current_equity) / self.daily_start_equity
-            if daily_loss > self.max_drawdown:
+            current_drawdown = (self.daily_start_equity - self.current_equity) / self.daily_start_equity
+            if current_drawdown > self.max_drawdown:
                 self.circuit_breaker_active = True
                 self.circuit_breaker_reason = f"Daily loss limit {self.max_drawdown*100:.1f}% breached"
                 latency_us = (time.perf_counter() - start_time) * 1_000_000.0
